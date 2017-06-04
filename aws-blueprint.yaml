@@ -19,12 +19,12 @@ inputs:
   ami:
     description: >
       An AWS AMI. Tested with a Centos 7.0 image.
-    default: ami-ae7bfdb8
+    default: ami-f4533694 # centos7 us-west-2
 
   instance_type:
     description: >
       The AWS instance_type. Tested with m3.medium, although that is unnecessarily large.
-    default: t2.small
+    default: m3.medium
 
   agent_user:
     description: >
@@ -41,20 +41,28 @@ dsl_definitions:
       aws_secret_access_key: { get_secret: aws_secret_access_key }
       ec2_region_name: { get_secret: ec2_region_name }
       ec2_region_endpoint: { get_secret: ec2_region_endpoint }
+    agent_config: &agent_config
+        user: { get_input: agent_user }
+        key: '/home/centos/agent-priv.pem'
+        install_method: remote
 
 node_templates:
+  agent_security_group:
+    type: cloudify.aws.nodes.SecurityGroup
+    properties:
+      description: Cloudify agent security group
+      use_external_resource: true
+      resource_id: sg-7a193001
+      aws_config: *aws_config
 
   kubernetes_master_host:
     type: cloudify.aws.nodes.Instance
     properties:
-      agent_config:
-        install_method: remote
-        user: { get_input: agent_user }
-        port: 22
-        key: { get_secret: agent_key_private }
+      agent_config: *agent_config
       aws_config: *aws_config
       image_id: { get_input: ami }
       instance_type: { get_input: instance_type }
+      name: k8s_master
     interfaces:
       cloudify.interfaces.lifecycle:
         create:
@@ -70,20 +78,19 @@ node_templates:
         target: ssh_group
       - type: cloudify.aws.relationships.instance_connected_to_security_group
         target: kubernetes_security_group
+      - type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: agent_security_group
       - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
         target: kubernetes_master_ip
 
   kubernetes_node_host:
     type: cloudify.aws.nodes.Instance
     properties:
-      agent_config:
-        install_method: remote
-        user: { get_input: agent_user }
-        port: 22
-        key: { get_secret: agent_key_private }
+      agent_config: *agent_config
       aws_config: *aws_config
       image_id: { get_input: ami }
       instance_type: { get_input: instance_type }
+      name: k8s_node
     relationships:
       - type: cloudify.aws.relationships.instance_connected_to_subnet
         target: private_subnet
@@ -91,6 +98,8 @@ node_templates:
         target: ssh_group
       - type: cloudify.aws.relationships.instance_connected_to_security_group
         target: kubernetes_security_group
+      - type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: agent_security_group
     interfaces:
       cloudify.interfaces.lifecycle:
         create:
