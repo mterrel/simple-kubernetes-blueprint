@@ -5,8 +5,11 @@ import grp
 import os
 import getpass
 import subprocess
+import tempfile
 from cloudify import ctx
 
+class CmdException(Exception):
+    pass
 
 def execute_command(_command):
 
@@ -29,16 +32,49 @@ def execute_command(_command):
     ctx.logger.debug('process.returncode: {0} '.format(process.returncode))
 
     if process.returncode:
-        ctx.logger.error('Running `{0}` returns error.'.format(_command))
-        return False
+        err = 'Running `{0}` returns error.'.format(_command)
+        ctx.logger.error(err)
+        raise CmdException(err)
 
     return output
+
+def sudo_write_file(dest_file, contents):
+    ctx.logger.info('creating file %s' % dest_file)
+
+    f = None
+    temp_name = None
+    try:
+        try:
+            fd,temp_name = tempfile.mkstemp()
+            f = os.fdopen(fd, 'w')
+            f.write(contents)
+        finally:
+            if f: f.close()
+            elif temp_name: os.close(fd)
+        execute_command('sudo cp %s %s' % (temp_name, dest_file))
+    finally:
+        if temp_name:
+            os.remove(temp_name)
 
 
 if __name__ == '__main__':
 
+    # Create config file
+    kubeadm_config = '''
+apiVersion: kubeadm.k8s.io/v1alpha1
+kind: MasterConfiguration
+apiServerExtraArgs:
+  basic-auth-file: /etc/kubernetes/basic.auth
+'''
+    basic_auth = '''
+admin,admin,100
+'''
+
+    sudo_write_file('/etc/kubernetes/kubeadm.config', kubeadm_config)
+    sudo_write_file('/etc/kubernetes/basic.auth', basic_auth)
+
     # Start the Kube Master
-    start_output = execute_command('sudo kubeadm init --skip-preflight-checks')
+    start_output = execute_command('sudo kubeadm init --skip-preflight-checks --config /etc/kubernetes/kubeadm.config')
     for line in start_output.split('\n'):
         if 'kubeadm join' in line:
             ctx.instance.runtime_properties['join_command'] = line.lstrip()
@@ -56,3 +92,4 @@ if __name__ == '__main__':
         outfile.write('export KUBECONFIG=$HOME/admin.conf')
     os.environ['KUBECONFIG'] = admin_file_dest
     execute_command('kubectl apply -f https://git.io/weave-kube-1.6')
+

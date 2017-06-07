@@ -14,6 +14,14 @@ node_templates:
       - type: cloudify.relationships.depends_on
         target: kubernetes_master
 
+  kubernetes_dashboard:
+    type: cloudify.nodes.Kubernetes.Dashboard
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: kubernetes_master_host
+      - type: cloudify.relationships.depends_on
+        target: kubernetes_master
+
 groups:
 
   scale_up_group:

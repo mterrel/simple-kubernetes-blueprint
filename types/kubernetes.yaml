@@ -26,3 +26,10 @@ node_types:
           implementation: scripts/create.py
         configure:
           implementation: scripts/configure_node.py
+
+  cloudify.nodes.Kubernetes.Dashboard:
+    derived_from: cloudify.nodes.Root
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/dashboard_create.py
