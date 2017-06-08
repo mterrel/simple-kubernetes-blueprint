@@ -257,6 +257,5 @@ policies:
 
 outputs:
   kubectl_config:
-    description: kubectl config
-    value:
-      command: {concat: ["scp -i <agent_private_ssh_key> ",{ get_input: agent_user }, "@", { get_attribute: [ kubernetes_master_ip, aws_resource_id ]},":admin.conf ." ] }
+    description: Full text of the configuration used to connect to the master.
+    value: { get_attribute: [ kubernetes_master, configuration_file_content ] }
