@@ -1,0 +1,3 @@
+[submodule "ubscfylib"]
+	path = ubscfylib
+	url = git@gitlab.com:unboundedsystems/ubscfylib.git
