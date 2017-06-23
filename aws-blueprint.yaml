@@ -11,8 +11,10 @@ imports:
   - types/scale.yaml
   - types/cloud_config/cloud-config.yaml
   - types/kubernetes.yaml
-  - imports/kubernetes.yaml
   - imports/cloud-config.yaml
+  - ubscfylib/common/types.yaml
+  - ubscfylib/storage/rexray/types.yaml
+  - imports/kubernetes.yaml
 
 inputs:
 
@@ -42,78 +44,66 @@ dsl_definitions:
       ec2_region_name: { get_secret: ec2_region_name }
       ec2_region_endpoint: { get_secret: ec2_region_endpoint }
     agent_config: &agent_config
-        user: { get_input: agent_user }
-        key: '/home/centos/agent-priv.pem'
-        install_method: remote
+      user: { get_input: agent_user }
+      key: '/home/centos/agent-priv.pem'
+      install_method: remote
+      #extra:
+      #  package_url: http://cloudify:4444/centos-Core-agent.tar.gz
+    default_root_block_device_map: &default_root_block_device_map
+      /dev/sda1:
+        size: 8
+        delete_on_termination: true
+    aws_k8s_host_common_relationships:
+      - &sg_ssh
+        type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: ssh_group
+      - &sg_agent
+        type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: agent_security_group
+      - &sg_kube
+        type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: kubernetes_security_group
+      - &agent_modules
+        type: ubs.relationships.agent_modules_from
+        target: ubs.nodes.default_modules
+      - &storage
+        type: ubs.relationships.storage.provided_by.rexray
+        target: rexray
 
-node_templates:
-  agent_security_group:
-    type: cloudify.aws.nodes.SecurityGroup
-    properties:
-      description: Cloudify agent security group
-      use_external_resource: true
-      resource_id: sg-7a193001
-      aws_config: *aws_config
 
-  kubernetes_master_host:
-    type: cloudify.aws.nodes.Instance
+
+node_types:
+
+  aws_k8s_host_common:
+    derived_from: cloudify.aws.nodes.Instance
     properties:
-      agent_config: *agent_config
-      aws_config: *aws_config
-      image_id: { get_input: ami }
-      instance_type: { get_input: instance_type }
-      name: k8s_master
+      agent_config:
+        default: *agent_config
+      aws_config:
+        default: *aws_config
+      image_id:
+        default: { get_input: ami }
+      instance_type:
+        default: { get_input: instance_type }
+      parameters:
+        default:
+          block_device_map: *default_root_block_device_map
     interfaces:
       cloudify.interfaces.lifecycle:
         create:
           implementation: aws.cloudify_aws.ec2.instance.create
           inputs:
             args:
-              placement: { get_secret: availability_zone }
-              user_data: { get_attribute: [ cloudify_host_cloud_config, cloud_config ] }
-    relationships:
-      - type: cloudify.aws.relationships.instance_connected_to_subnet
-        target: public_subnet
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: ssh_group
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: kubernetes_security_group
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: agent_security_group
-      - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
-        target: kubernetes_master_ip
-
-  kubernetes_node_host:
-    type: cloudify.aws.nodes.Instance
-    properties:
-      agent_config: *agent_config
-      aws_config: *aws_config
-      image_id: { get_input: ami }
-      instance_type: { get_input: instance_type }
-      name: k8s_node
-    relationships:
-      - type: cloudify.aws.relationships.instance_connected_to_subnet
-        target: private_subnet
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: ssh_group
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: kubernetes_security_group
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: agent_security_group
-    interfaces:
-      cloudify.interfaces.lifecycle:
-        create:
-          implementation: aws.cloudify_aws.ec2.instance.create
-          inputs:
-            args:
-              placement: { get_secret: availability_zone }
-              user_data: { get_attribute: [ cloudify_host_cloud_config, cloud_config ] }
+              default:
+                placement: { get_secret: availability_zone }
+                user_data: { get_attribute: [ cloudify_host_cloud_config, cloud_config ] }
       cloudify.interfaces.monitoring_agent:
         install:
           implementation: diamond.diamond_agent.tasks.install
           inputs:
             diamond_config:
-              interval: 1
+              default:
+                interval: 1
         start: diamond.diamond_agent.tasks.start
         stop: diamond.diamond_agent.tasks.stop
         uninstall: diamond.diamond_agent.tasks.uninstall
@@ -122,15 +112,60 @@ node_templates:
           implementation: diamond.diamond_agent.tasks.add_collectors
           inputs:
             collectors_config:
-              ProcessResourcesCollector:
-                config:
-                  enabled: true
-                  unit: B
-                  measure_collector_time: true
-                  cpu_interval: 0.5
-                  process:
-                    hyperkube:
-                      name: hyperkube
+              default:
+                ProcessResourcesCollector:
+                  config:
+                    enabled: true
+                    unit: B
+                    measure_collector_time: true
+                    cpu_interval: 0.5
+                    process:
+                      hyperkube:
+                        name: hyperkube
+
+node_templates:
+
+  #
+  # Hosts
+  #
+  kubernetes_master_host:
+    type: aws_k8s_host_common
+    properties:
+      name: k8s_master
+    relationships:
+      - *sg_ssh
+      - *sg_agent
+      - *sg_kube
+      - *agent_modules
+      - *storage
+      - type: cloudify.aws.relationships.instance_connected_to_subnet
+        target: public_subnet
+      - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
+        target: kubernetes_master_ip
+
+  kubernetes_node_host:
+    type: aws_k8s_host_common
+    properties:
+      name: k8s_node
+    relationships:
+      - *sg_ssh
+      - *sg_agent
+      - *sg_kube
+      - *agent_modules
+      - *storage
+      - type: cloudify.aws.relationships.instance_connected_to_subnet
+        target: private_subnet
+
+  #
+  # Security Groups
+  #
+  agent_security_group:
+    type: cloudify.aws.nodes.SecurityGroup
+    properties:
+      description: Cloudify agent security group
+      use_external_resource: true
+      resource_id: sg-7a193001
+      aws_config: *aws_config
 
   kubernetes_security_group:
     type: cloudify.aws.nodes.SecurityGroup
@@ -200,6 +235,9 @@ node_templates:
       - type: cloudify.aws.relationships.security_group_contained_in_vpc
         target: vpc
 
+  #
+  # Networking
+  #
   kubernetes_master_ip:
     type: cloudify.aws.nodes.ElasticIP
     properties:
@@ -241,6 +279,15 @@ node_templates:
       - type: cloudify.relationships.depends_on
         target: cloudify_host_cloud_config
 
+  #
+  # Storage
+  #
+  rexray:
+    type: ubs.nodes.storage.provider.rexray
+    properties:
+      aws_config: *aws_config
+
+
 groups:
 
   k8s_node_scale_group:
@@ -259,3 +306,4 @@ outputs:
   kubectl_config:
     description: Full text of the configuration used to connect to the master.
     value: { get_attribute: [ kubernetes_master, configuration_file_content ] }
+

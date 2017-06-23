@@ -4,77 +4,28 @@ import pwd
 import grp
 import os
 import getpass
-import subprocess
-import tempfile
+import py.path
 from cloudify import ctx
 
-class CmdException(Exception):
-    pass
+import ubs.plugins
+from ubs.utils import run_cmd
 
-def execute_command(_command):
-
-    ctx.logger.debug('_command {0}.'.format(_command))
-
-    subprocess_args = {
-        'args': _command.split(),
-        'stdout': subprocess.PIPE,
-        'stderr': subprocess.PIPE
-    }
-
-    ctx.logger.debug('subprocess_args {0}.'.format(subprocess_args))
-
-    process = subprocess.Popen(**subprocess_args)
-    output, error = process.communicate()
-
-    ctx.logger.debug('command: {0} '.format(_command))
-    ctx.logger.debug('output: {0} '.format(output))
-    ctx.logger.debug('error: {0} '.format(error))
-    ctx.logger.debug('process.returncode: {0} '.format(process.returncode))
-
-    if process.returncode:
-        err = 'Running `{0}` returns error.'.format(_command)
-        ctx.logger.error(err)
-        raise CmdException(err)
-
-    return output
-
-def sudo_write_file(dest_file, contents):
-    ctx.logger.info('creating file %s' % dest_file)
-
-    f = None
-    temp_name = None
-    try:
-        try:
-            fd,temp_name = tempfile.mkstemp()
-            f = os.fdopen(fd, 'w')
-            f.write(contents)
-        finally:
-            if f: f.close()
-            elif temp_name: os.close(fd)
-        execute_command('sudo cp %s %s' % (temp_name, dest_file))
-    finally:
-        if temp_name:
-            os.remove(temp_name)
+etc_admin_conf = '/etc/kubernetes/admin.conf'
+user_conf = os.path.expanduser('~/admin.conf')
 
 
-if __name__ == '__main__':
-
-    # Create config file
-    kubeadm_config = '''
-apiVersion: kubeadm.k8s.io/v1alpha1
-kind: MasterConfiguration
-apiServerExtraArgs:
-  basic-auth-file: /etc/kubernetes/basic.auth
-'''
-    basic_auth = '''
-admin,admin,100
-'''
-
-    sudo_write_file('/etc/kubernetes/kubeadm.config', kubeadm_config)
-    sudo_write_file('/etc/kubernetes/basic.auth', basic_auth)
+def start_cluster():
+    # Using existence of user admin.conf as check on whether kubeadm has run
+    # successfully once. Note that doesn't mean k8s is fully up and running; it
+    # just means we shouldn't run kubeadm again.
+    conf_path = py.path.local(user_conf)
+    if conf_path.check():
+        ctx.logger.debug("Kubeadm already started. Skipping.")
+        return
 
     # Start the Kube Master
-    start_output = execute_command('sudo kubeadm init --skip-preflight-checks --config /etc/kubernetes/kubeadm.config')
+    start_output = run_cmd(['kubeadm', 'init', '--skip-preflight-checks'],
+                           sudo=True)
     for line in start_output.split('\n'):
         if 'kubeadm join' in line:
             ctx.instance.runtime_properties['join_command'] = line.lstrip()
@@ -83,13 +34,33 @@ admin,admin,100
     agent_user = getpass.getuser()
     uid = pwd.getpwnam(agent_user).pw_uid
     gid = grp.getgrnam('docker').gr_gid
-    admin_file_dest = os.path.join(os.path.expanduser('~'), 'admin.conf')
 
-    execute_command('sudo cp {0} {1}'.format('/etc/kubernetes/admin.conf', admin_file_dest))
-    execute_command('sudo chown {0}:{1} {2}'.format(uid, gid, admin_file_dest))
+    run_cmd(['cp', etc_admin_conf, user_conf], sudo=True)
+    run_cmd(['chown', '%s:%s' % (uid, gid), user_conf], sudo=True)
 
-    with open(os.path.join(os.path.expanduser('~'), '.bashrc'), 'a') as outfile:
+
+    # TODO: this is bash-specific. Either mandate that the agent user uses
+    #       bash or deal appropriately with all shells (ugh) or ensure
+    #       config is always set on kubectl a different way
+    with open(os.path.expanduser('~/.bashrc'), 'a') as outfile:
         outfile.write('export KUBECONFIG=$HOME/admin.conf')
-    os.environ['KUBECONFIG'] = admin_file_dest
-    execute_command('kubectl apply -f https://git.io/weave-kube-1.6')
 
+def start_networking():
+    # TODO: This should be able to start any networking, not just weave
+    os.environ['KUBECONFIG'] = user_conf
+    if 'weave-net' in run_cmd('kubectl get daemonset --all-namespaces'):
+        # Weave already started
+        return
+    run_cmd(('kubectl apply -n kube-system '
+             '-f "https://cloud.weave.works/k8s/net?k8s-version='
+             '$(kubectl version | base64 | tr -d \'\n\')"'),
+             shell=True)
+
+
+def main():
+    start_cluster()
+    start_networking()
+
+
+if __name__ == '__main__':
+    main()
