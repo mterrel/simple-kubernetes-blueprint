@@ -7,7 +7,8 @@ import getpass
 import py.path
 from cloudify import ctx
 
-import ubs.plugins
+from ubs import plugins
+plugins.load('ubs.utils')
 from ubs.utils import run_cmd
 
 etc_admin_conf = '/etc/kubernetes/admin.conf'

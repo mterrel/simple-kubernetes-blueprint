@@ -1,0 +1,15 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+node_types:
+  ubs.manager_config:
+    derived_from: cloudify.nodes.Root
+    properties:
+      file_server_url:
+        type: string
+        required: true
+
+node_templates:
+  _cloudify_manager:
+    type: ubs.manager_config
+    properties:
+      file_server_url: https://172.31.34.182:53333/resources/

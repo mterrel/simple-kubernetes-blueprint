@@ -13,8 +13,10 @@ imports:
   - types/kubernetes.yaml
   - imports/cloud-config.yaml
   - ubscfylib/common/types.yaml
-  - ubscfylib/storage/rexray/types.yaml
   - imports/kubernetes.yaml
+
+  # Move this to be located on the manager as part of the install?
+  - imports/cloudify_manager.yaml
 
 inputs:
 
@@ -47,8 +49,12 @@ dsl_definitions:
       user: { get_input: agent_user }
       key: '/home/centos/agent-priv.pem'
       install_method: remote
-      #extra:
-      #  package_url: http://cloudify:4444/centos-Core-agent.tar.gz
+      extra:
+        # Alternate agent deployment
+        package_url: 
+          concat:
+            - get_property: [_cloudify_manager, file_server_url]
+            - packages/agents/centos-core-agent-mterrel0626.tar.gz
     default_root_block_device_map: &default_root_block_device_map
       /dev/sda1:
         size: 8
@@ -66,9 +72,6 @@ dsl_definitions:
       - &agent_modules
         type: ubs.relationships.agent_modules_from
         target: ubs.nodes.default_modules
-      - &storage
-        type: ubs.relationships.storage.provided_by.rexray
-        target: rexray
 
 
 
@@ -137,7 +140,6 @@ node_templates:
       - *sg_agent
       - *sg_kube
       - *agent_modules
-      - *storage
       - type: cloudify.aws.relationships.instance_connected_to_subnet
         target: public_subnet
       - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
@@ -152,7 +154,6 @@ node_templates:
       - *sg_agent
       - *sg_kube
       - *agent_modules
-      - *storage
       - type: cloudify.aws.relationships.instance_connected_to_subnet
         target: private_subnet
 
@@ -278,14 +279,6 @@ node_templates:
     relationships:
       - type: cloudify.relationships.depends_on
         target: cloudify_host_cloud_config
-
-  #
-  # Storage
-  #
-  rexray:
-    type: ubs.nodes.storage.provider.rexray
-    properties:
-      aws_config: *aws_config
 
 
 groups:
