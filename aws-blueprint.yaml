@@ -12,7 +12,7 @@ imports:
   - types/cloud_config/cloud-config.yaml
   - types/kubernetes.yaml
   - imports/cloud-config.yaml
-  - ubscfylib/common/types.yaml
+  - https://gitlab.com/mterrel/ubs-cloudify-core-plugin/raw/master/plugin.yaml
   - imports/kubernetes.yaml
 
   # Move this to be located on the manager as part of the install?
@@ -54,7 +54,7 @@ dsl_definitions:
         package_url: 
           concat:
             - get_property: [_cloudify_manager, file_server_url]
-            - packages/agents/centos-core-agent-mterrel0626.tar.gz
+            - packages/agents/centos-core-agent-mterrel0717.tar.gz
     default_root_block_device_map: &default_root_block_device_map
       /dev/sda1:
         size: 8
